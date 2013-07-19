@@ -15,10 +15,10 @@ class DataStore():
         self.datastore = sqlite3.connect(store_file)
         self.__indexes__ = []
         self.indexes()
-        self._create_table('datastore', table_type='master')
-        self._create_table('collections')
+        self.__create_table__('datastore', table_type='master')
+        self.__create_table__('collections')
 
-    def _create_table(self, name, table_type='index'):
+    def __create_table__(self, name, table_type='index'):
         """
         Make a table
         """
@@ -39,13 +39,13 @@ class DataStore():
             cursor.execute(idx_sql % tuple([table_name] * 2))
         self.datastore.commit()
 
-    def _update_indexes(self, item, indexers):
+    def __update_indexes__(self, item, indexers):
         """
         TODO: look at using the sqlite create function thing here...
         """
         for name, index_function in indexers.items():
             if 't_cloudant_sync_idx_%s' % name not in self.__indexes__:
-                self._create_table(name)
+                self.__create_table__(name)
                 self.__indexes__.append(name)
 
             row = {
@@ -53,6 +53,23 @@ class DataStore():
             }
             row.update(index_function(item))
             self.__set_index__(row, name)
+
+    def __set_index__(self, row, index):
+        """
+        Add an id, key, value triple to an index table
+        """
+        sql = "INSERT INTO t_cloudant_sync_idx_%s VALUES ('%s', '%s', '%s');"
+        cursor = self.datastore.cursor()
+        cursor.execute(sql % (index, row['id'], row['key'], row['value']))
+
+    def __fetch_query__(self, sql, fields=('id', 'key', 'value')):
+        docs = []
+        cursor = self.datastore.cursor()
+        cursor.execute(sql)
+        for i in cursor.fetchall():
+            # NOTE: not the reserved _id because this is a reference
+            docs.append(dict(zip(fields, i)))
+        return docs
 
     def get(self, item_id):
         """
@@ -72,7 +89,7 @@ class DataStore():
         if '_rev' not in item.keys():
             # TODO: correct for MVCC semantics
             item['_rev'] = 0
-        self._update_indexes(item, indexers)
+        self.__update_indexes__(item, indexers)
 
         sql = "INSERT INTO t_cloudant_sync_datastore VALUES ('%s', '%s', '%s');"
         cursor = self.datastore.cursor()
@@ -91,14 +108,6 @@ class DataStore():
         self.datastore.commit()
         return item['_id']
 
-    def __set_index__(self, row, index):
-        """
-        Add an id, key, value triple to an index table
-        """
-        sql = "INSERT INTO t_cloudant_sync_idx_%s VALUES ('%s', '%s', '%s');"
-        cursor = self.datastore.cursor()
-        cursor.execute(sql % (index, row['id'], row['key'], row['value']))
-
     def bulk_set(self, list_of_items, indexers={}):
         """
         Add multiple documents to the data store.
@@ -107,28 +116,19 @@ class DataStore():
         """
         return []
 
-    def get_by_index(self, index=False, sql=False, fields=('id', 'key', 'value')):
+    def get_by_index(self, index):
         """
         Retrieve documents from an index.
         """
-        if not sql:
-            if not index:
-                raise
-            sql = "select * from t_cloudant_sync_idx_%s" % (index)
-        docs = []
-        cursor = self.datastore.cursor()
-        cursor.execute(sql)
-        for i in cursor.fetchall():
-            # NOTE: not the reserved _id because this is a reference
-            docs.append(dict(zip(fields, i)))
-        return docs
+        sql = "select * from t_cloudant_sync_idx_%s" % (index)
+        return self.__fetch_query__(sql)
 
     def get_collection(self, collection):
         """
         Retrieve documents from a collection.
         """
         sql = "select _id from t_cloudant_sync_idx_collections where key='%s';"
-        return self.get_by_index(sql=sql % collection)
+        return self.__fetch_query__(sql=sql % collection)
 
     def indexes(self):
         """
@@ -136,27 +136,8 @@ class DataStore():
         """
         sql = """SELECT name FROM sqlite_master
             WHERE type = 'table' AND name like 't_cloudant_sync_idx_%'"""
-        cursor = self.datastore.cursor()
-        cursor.execute(sql)
-        self.__indexes__ = []
-        for index in cursor.fetchall():
-            self.__indexes__.append(index[0])
+        self.__indexes__ = [x['name'] for x in self.__fetch_query__(
+            sql,
+            fields=['name']
+        )]
         return self.__indexes__
-
-
-class FieldedDataStore(DataStore):
-    def __init__(self, store_file="datastore", fields=('_id', '_rev', 'body')):
-        """
-        Connect the database, check for existing 'indexes'.
-        Defines a schema for the data store table, allowing for optimised
-        queries by a different index.
-
-            datastore: string, location of datastore (file or :memory:)
-            fields: tuple (ordering important) of fields to store
-
-        """
-        self.datastore = sqlite3.connect(store_file)
-        self.__indexes__ = []
-        self.indexes()
-        self._create_table('datastore', table_type='master')
-        self.fields = fields

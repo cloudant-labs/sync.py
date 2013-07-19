@@ -45,7 +45,7 @@ print 'test by index:', ds.get_by_index("my_index")[0:2]
 # Query by arbitrary index
 query = "select key, sum(value) from t_cloudant_sync_idx_my_index group by key;"
 print 'test by index:', \
-    ds.get_by_index("my_index", sql=query, fields=('key', 'sum'))
+    ds.__fetch_query__(sql=query, fields=('key', 'sum'))[0:2]
 
 # Query by collection
-print 'test by collection:', ds.get_collection('evens')
+print 'test by collection:', ds.get_collection('evens')[0:2]
